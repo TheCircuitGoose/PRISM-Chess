@@ -1,5 +1,5 @@
 /*
- * Chess Engine V0.5
+ * Prism Engine V0.6
  *
  * (C) 2025 Tommy Ciccone All Rights Reserved.
 */
@@ -8,8 +8,6 @@
 #include <iostream>
 #include <string>
 #include <vector>
-#include <thread>
-#include "omp.h" // Include OpenMP for parallel processing. Need to install omp to build.
 
 using namespace std;
 
@@ -30,7 +28,6 @@ class Timer {
 };
 
 int engineDepth = 5;
-int engineBranches = 10;
 
 bool whiteKingMoved = 0, blackKingMoved = 0, whiteLeftRookMoved = 0, 
     whiteRightRookMoved = 0, blackLeftRookMoved = 0, blackRightRookMoved = 0;
@@ -67,7 +64,7 @@ void printBoard() { // print board to console
     cout << "\033[90m  a b c d e f g h\n\n\033[0m"; // file
 }
 
-int immediateEvaluation(bool isOpening = false) {
+int immediateEvaluation() {
     int evaluation = 0;
     bool whiteWins = true;
     bool blackWins = true;
@@ -128,13 +125,11 @@ int immediateEvaluation(bool isOpening = false) {
             if (piece == 'P') {
                 if ((i == 3 || i == 4) && (j == 3 || j == 4)) {
                     evaluation += 5;
-                    if (isOpening) evaluation += 3; // extra bonus for center control in opening
                 }
             }
             if (piece == 'p') {
                 if ((i == 3 || i == 4) && (j == 3 || j == 4)) {
                     evaluation -= 5;
-                    if (isOpening) evaluation -= 3; // extra bonus for center control in opening
                 }
             }
         }
@@ -275,7 +270,7 @@ vector<string> enumerateKingMoves(int r, int f, char piece) { // list all possib
             }
         }
     }
-/*  if (piece == 'K' && !whiteKingMoved) { // white castling
+  if (piece == 'K' && !whiteKingMoved) { // white castling
         if (!whiteLeftRookMoved && board[7][1] == '.' && board[7][2] == '.' && board[7][3] == '.') {
             moves.push_back("7472Q"); // queenside
         }
@@ -290,7 +285,7 @@ vector<string> enumerateKingMoves(int r, int f, char piece) { // list all possib
         if (!blackRightRookMoved && board[0][5] == '.' && board[0][6] == '.') {
             moves.push_back("0406K"); // kingside
         }
-    }*/
+    }
     return moves;
 }
 
@@ -323,19 +318,60 @@ vector<string> enumerateAllMoves(bool whiteToMove) {
     return moves;
 }
 
-int enumerateMoveTree(int depth, int branches, bool whiteToMove, int currentEval) { // recursive evaluation of position
-    if (depth == 0) return immediateEvaluation(); // base case
+int getMoveScore(string move) {
+    // Rank moves for better alpha-beta pruning
+    int score = 0;
+    int r = move[0] - '0';
+    int f = move[1] - '0';
+    int tr = move[2] - '0';
+    int tf = move[3] - '0';
+    char piece = board[r][f];
+    char captured = board[tr][tf];
 
-    if (depth < (engineDepth - 2)) { // basic pruning code
-        if (currentEval - immediateEvaluation() < -10) {
-            return immediateEvaluation();
-        } 
+    // rank captures with MVV/LVA
+    if (captured != '.') {
+        int victimValue = 0;
+        switch (tolower(captured)) {
+            case 'p': victimValue = 1; break;
+            case 'n': victimValue = 3; break;
+            case 'b': victimValue = 3; break;
+            case 'r': victimValue = 5; break;
+            case 'q': victimValue = 9; break;
+            case 'k': victimValue = 100; break;
+        }
+        
+        int attackerValue = 0;
+        switch (tolower(piece)) {
+            case 'p': attackerValue = 1; break;
+            case 'n': attackerValue = 3; break;
+            case 'b': attackerValue = 3; break;
+            case 'r': attackerValue = 5; break;
+            case 'q': attackerValue = 9; break;
+            case 'k': attackerValue = 100; break;
+        }
+        
+        score = 1000 + (victimValue * 10) - attackerValue;
     }
 
+    return score;
+}
+
+vector<string> orderMoves(vector<string> moves) {
+    // Sort moves by score descending
+    sort(moves.begin(), moves.end(), [](const string& a, const string& b) {
+        return getMoveScore(a) > getMoveScore(b);
+    });
+    return moves;
+}
+
+int enumerateMoveTree(int depth, bool whiteToMove, int currentEval, int alpha = -10000000, int beta = 10000000) { // recursive evaluation with alpha-beta pruning
+    if (depth == 0) return immediateEvaluation(); // base case
+
     vector<string> moves = enumerateAllMoves(whiteToMove); // get moves
-    if (whiteToMove) { // for white
+    moves = orderMoves(moves); // order moves for better time
+    
+    if (whiteToMove) { // for white (maximizing player)
         int te = -10000000; // initial value
-        #pragma omp parallel for // multithread with OpenMP
         for (string move : moves) {
             int r = move[0] - '0'; // make move
             int f = move[1] - '0';
@@ -344,15 +380,16 @@ int enumerateMoveTree(int depth, int branches, bool whiteToMove, int currentEval
             char captured = board[tr][tf];
             board[tr][tf] = board[r][f];
             board[r][f] = '.';
-            int evaluation = enumerateMoveTree(depth - 1, branches, false, currentEval); // evaluate
+            int evaluation = enumerateMoveTree(depth - 1, false, currentEval, alpha, beta);
             board[r][f] = board[tr][tf]; // undo move
             board[tr][tf] = captured;
             te = max(te, evaluation);
+            alpha = max(alpha, te); // update alpha
+            if (beta <= alpha) break; // prune remaining branches
         }
         return te; // return evaluation
-    } else { // for black
+    } else { // for black (minimizing player)
         int te = 10000000; 
-        #pragma omp parallel for // multithread with OpenMP
         for (string move : moves) {
             int r = move[0] - '0';
             int f = move[1] - '0';
@@ -371,7 +408,7 @@ int enumerateMoveTree(int depth, int branches, bool whiteToMove, int currentEval
                     board[0][0] = '.';
                 }
             }
-            int evaluation = enumerateMoveTree(depth - 1, branches, true, currentEval);
+            int evaluation = enumerateMoveTree(depth - 1, true, currentEval, alpha, beta);
             board[r][f] = board[tr][tf];
             board[tr][tf] = captured;
             if (move.length() == 5) { // undo castling move
@@ -385,72 +422,66 @@ int enumerateMoveTree(int depth, int branches, bool whiteToMove, int currentEval
                 }
             }
             te = min(te, evaluation);
+            beta = min(beta, te); // update beta
+            if (beta <= alpha) break; // prune remaining branches
         }
         return te;
     }
 }
 
-string selector(int depth, int branches, int currentEval) { // select best move for black
-    char backupBoard[8][8]; // Backup board data in case something goes wrong in selection
-    memcpy(backupBoard, board, sizeof(board));
-    bool backupWhiteKingMoved = whiteKingMoved;
-    bool backupBlackKingMoved = blackKingMoved;
-    bool backupWhiteLeftRookMoved = whiteLeftRookMoved;
-    bool backupWhiteRightRookMoved = whiteRightRookMoved;
-    bool backupBlackLeftRookMoved = blackLeftRookMoved;
-    bool backupBlackRightRookMoved = blackRightRookMoved;
-    bool backupCastled = castled;
-
+string selector(int depth, int currentEval) { // select best move for black
     vector<string> moves = enumerateAllMoves(false); // black to move
+    moves = orderMoves(moves); // order moves for better time
+
     string bestMove;
     int te = 10000000;
-    #pragma omp parallel for // multithread with OpenMP
-    for (string move : moves) {
-        int r = move[0] - '0'; // make move
-        int f = move[1] - '0';
-        int tr = move[2] - '0';
-        int tf = move[3] - '0';
+    
+    for (int i = 0; i < moves.size(); i++) {
+        int r = moves[i][0] - '0';
+        int f = moves[i][1] - '0';
+        int tr = moves[i][2] - '0';
+        int tf = moves[i][3] - '0';
+        
         char captured = board[tr][tf];
         board[tr][tf] = board[r][f];
         board[r][f] = '.';
-        if (move.length() == 5) { // castling if K or Q is appended to move tag
-            if (move[4] == 'K') {
+        
+        // Handle castling
+        if (moves[i].length() == 5) {
+            if (moves[i][4] == 'K') {
                 board[0][5] = 'r';
                 board[0][7] = '.';
             }
-            if (move[4] == 'Q') {
+            if (moves[i][4] == 'Q') {
                 board[0][3] = 'r';
                 board[0][0] = '.';
             }
         }
-        int evaluation = enumerateMoveTree(depth - 1, branches, true, currentEval); // evaluate
-        board[r][f] = board[tr][tf]; // undo move
+        
+        int evaluation = enumerateMoveTree(depth - 1, true, currentEval);
+        
+        // Undo the move immediately
+        board[r][f] = board[tr][tf];
         board[tr][tf] = captured;
-        if (move.length() == 5) { // undo castling move
-            if (move[4] == 'K') {
+        
+        if (moves[i].length() == 5) {
+            if (moves[i][4] == 'K') {
                 board[0][7] = 'r';
                 board[0][5] = '.';
             }
-            if (move[4] == 'Q') {
+            if (moves[i][4] == 'Q') {
                 board[0][0] = 'r';
                 board[0][3] = '.';
             }
         }
-        if (evaluation < te) { // if better than previous best move, set as new best move
+        
+        if (evaluation < te) {
             te = evaluation;
-            bestMove = move;
+            bestMove = moves[i];
         }
     }
+    
     return bestMove; // return best move
-
-    memcpy(board, backupBoard, sizeof(board)); // restore original board
-    whiteKingMoved = backupWhiteKingMoved;
-    blackKingMoved = backupBlackKingMoved;
-    whiteLeftRookMoved = backupWhiteLeftRookMoved;
-    whiteRightRookMoved = backupWhiteRightRookMoved;
-    blackLeftRookMoved = backupBlackLeftRookMoved;
-    blackRightRookMoved = backupBlackRightRookMoved;
-    castled = backupCastled;
 }
 
 string convertToCoordinates(string algebraic) { // convert lan to coordinates
@@ -500,7 +531,7 @@ int main(int argc, char* argv[]) {
     bool moveValid;
     Timer timer;
 
-    cout << "Welcome to Chess Engine V0.5\n";
+    cout << "Welcome to \033[1mPrism Engine V0.6\033[0m\n";
     cout << "(C) 2025 Tommy Ciccone All Rights Reserved.\n";
 
     initializeBoard();
@@ -521,7 +552,12 @@ int main(int argc, char* argv[]) {
 
         vector<string> legalMoves = enumerateAllMoves(true);
         for (string lm : legalMoves) {
-            if (lm == coordinates) moveValid = true;
+            // Check for exact match or match without castling flag
+            if (lm == coordinates || lm.substr(0, 4) == coordinates) {
+                moveValid = true;
+                coordinates = lm; // Use the full move string with flag if present
+                break;
+            }
         }
 
         if (!moveValid) {
@@ -539,6 +575,17 @@ int main(int argc, char* argv[]) {
         board[tr][tf] = board[r][f];
         board[r][f] = '.';
 
+        if (coordinates.length() == 5) {
+            if (coordinates[4] == 'K') {
+                board[7][5] = 'R';
+                board[7][7] = '.';
+            }
+            if (coordinates[4] == 'Q') {
+                board[7][3] = 'R';
+                board[7][0] = '.';
+            }
+        }
+
         printBoard();
         cout << "Evaluation: " << immediateEvaluation() << "\n\n";
 
@@ -546,7 +593,7 @@ int main(int argc, char* argv[]) {
         positionsEvaluated = 0;
         
         timer.start();
-        response = selector(engineDepth, engineBranches, immediateEvaluation());
+        response = selector(engineDepth, immediateEvaluation());
         timer.stop();
         if (response.size() < 4) {
             cout << "Black has no legal moves. Game over.\n";
@@ -566,12 +613,12 @@ int main(int argc, char* argv[]) {
         board[btr][btf] = board[br][bf];
         board[br][bf] = '.';
 
-        if (response.length() == 5 && (response[4] == 'K' || response[4] == 'Q')) {
-            if (response[4] == 'K' && board[0][7] == 'r') {
+        if (response.length() == 5) {
+            if (response[4] == 'K') {
                 board[0][5] = 'r';
                 board[0][7] = '.';
             }
-            if (response[4] == 'Q' && board[0][0] == 'r') {
+            if (response[4] == 'Q') {
                 board[0][3] = 'r';
                 board[0][0] = '.';
             }
