@@ -1,5 +1,6 @@
 /*
- * Prism Engine V0.6
+ * PRISM Engine V0.7
+ * Search Algorithm with Human-Written Evaluation
  *
  * (C) 2025 Tommy Ciccone All Rights Reserved.
 */
@@ -8,6 +9,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 using namespace std;
 
@@ -57,11 +59,56 @@ void printBoard() { // print board to console
     for (int i = 0; i < 8; i++) {
         cout << "\033[90m" << 8 - i << " \033[0m";  // rank
         for (int j = 0; j < 8; j++) {
-            cout << board[i][j] << ' ';             // piece
+            char piece = board[i][j];
+            string unicodePiece = ".";
+            
+            // Unicode chess pieces
+            switch (piece) { 
+                case 'K': unicodePiece = "♚"; break;
+                case 'Q': unicodePiece = "♛"; break;
+                case 'R': unicodePiece = "♜"; break;
+                case 'B': unicodePiece = "♝"; break;
+                case 'N': unicodePiece = "♞"; break;
+                case 'P': unicodePiece = "♟"; break;
+                case 'k': unicodePiece = "♔"; break;
+                case 'q': unicodePiece = "♕"; break;
+                case 'r': unicodePiece = "♖"; break;
+                case 'b': unicodePiece = "♗"; break;
+                case 'n': unicodePiece = "♘"; break;
+                case 'p': unicodePiece = "♙"; break;
+            }
+            
+            cout << unicodePiece << ' ';
         }
         cout << "\n";
     }
     cout << "\033[90m  a b c d e f g h\n\n\033[0m"; // file
+}
+
+// Move encoding: (flag << 16) | (r << 12) | (f << 8) | (tr << 4) | tf
+// flag: 0 = normal, 1 = kingside castle, 2 = queenside castle
+inline int encodeMove(int r, int f, int tr, int tf, int flag = 0) {
+    return (flag << 16) | (r << 12) | (f << 8) | (tr << 4) | tf;
+}
+
+inline int getFromRank(int move) {
+    return (move >> 12) & 0xF;
+}
+
+inline int getFromFile(int move) {
+    return (move >> 8) & 0xF;
+}
+
+inline int getToRank(int move) {
+    return (move >> 4) & 0xF;
+}
+
+inline int getToFile(int move) {
+    return move & 0xF;
+}
+
+inline int getMoveFlag(int move) {
+    return (move >> 16) & 0xF;
 }
 
 int immediateEvaluation() {
@@ -142,8 +189,9 @@ bool inBounds(int r, int f) { // check if a target square is on the board
     return r >= 0 && r < 8 && f >= 0 && f < 8;
 }
 
-vector<string> enumeratePawnMoves(int r, int f, char piece) { // list all possible pawn moves for a given pawn
-    vector<string> moves;
+vector<int> enumeratePawnMoves(int r, int f, char piece) { // list all possible pawn moves for a given pawn
+    vector<int> moves;
+    moves.reserve(4);
     int direction = 0;
     switch (piece) { // get forwards direction of pawn
         case 'P': direction = -1; break;
@@ -151,27 +199,28 @@ vector<string> enumeratePawnMoves(int r, int f, char piece) { // list all possib
     }
 
     if (inBounds(r + direction, f) && board[r + direction][f] == '.') { // check if square in front is empty
-        moves.push_back(to_string(r) + to_string(f) + to_string(r + direction) + to_string(f));
+        moves.push_back(encodeMove(r, f, r + direction, f));
         if ((piece == 'P' && r == 6) || (piece == 'p' && r == 1)) { // check if pawn is on starting square
             if (inBounds(r + 2 * direction, f) && board[r + 2 * direction][f] == '.') { // then check two ahead
-                moves.push_back(to_string(r) + to_string(f) + to_string(r + 2*direction) + to_string(f));
+                moves.push_back(encodeMove(r, f, r + 2*direction, f));
             }
         }
     }
 
     // captures
     if (inBounds(r + direction, f - 1) && islower(board[r + direction][f - 1]) != islower(piece) && board[r + direction][f - 1] != '.') {
-        moves.push_back(to_string(r) + to_string(f) + to_string(r + direction) + to_string(f - 1));
+        moves.push_back(encodeMove(r, f, r + direction, f - 1));
     }
 
     if (inBounds(r + direction, f + 1) && islower(board[r + direction][f + 1]) != islower(piece) && board[r + direction][f + 1] != '.') {
-        moves.push_back(to_string(r) + to_string(f) + to_string(r + direction) + to_string(f + 1));
+        moves.push_back(encodeMove(r, f, r + direction, f + 1));
     }
     return moves;
 }
 
-vector<string> enumerateKnightMoves(int r, int f, char piece) { // list all possible knight moves for a given knight
-    vector<string> moves;
+vector<int> enumerateKnightMoves(int r, int f, char piece) { // list all possible knight moves for a given knight
+    vector<int> moves;
+    moves.reserve(8);
     int knightMoves[8][2] = {{2, -1}, {2, 1}, {-2, -1}, {-2, 1}, {1, -2}, {1, 2}, {-1, -2}, {-1, 2}}; // knight move patterns
 
     for (int i = 0; i < 8; i++) { // check each knight move pattern, capture or open square
@@ -179,15 +228,16 @@ vector<string> enumerateKnightMoves(int r, int f, char piece) { // list all poss
         int tf = f + knightMoves[i][1];
         if (inBounds(tr, tf)) {
             if (board[tr][tf] == '.' || islower(board[tr][tf]) != islower(piece)) {
-                moves.push_back(to_string(r) + to_string(f) + to_string(tr) + to_string(tf));
+                moves.push_back(encodeMove(r, f, tr, tf));
             }
         }
     }
     return moves;
 }
 
-vector<string> enumerateBishopMoves(int r, int f, char piece) { // list all possible bishop moves for a given bishop
-    vector<string> moves;
+vector<int> enumerateBishopMoves(int r, int f, char piece) { // list all possible bishop moves for a given bishop
+    vector<int> moves;
+    moves.reserve(13);
     int bishopDirections[4][2] = {{1, 1}, {1, -1}, {-1, 1}, {-1, -1}}; // bishop move directions
     for (int i = 0; i < 4; i++) {
         int dr = bishopDirections[i][0];
@@ -196,10 +246,10 @@ vector<string> enumerateBishopMoves(int r, int f, char piece) { // list all poss
         int tf = f + df;
         while (inBounds(tr, tf)) { // keep moving in each direction until edge of board or blocked
             if (board[tr][tf] == '.') {
-                moves.push_back(to_string(r) + to_string(f) + to_string(tr) + to_string(tf));
+                moves.push_back(encodeMove(r, f, tr, tf));
             } else {
                 if (islower(board[tr][tf]) != islower(piece)) { // capture if blocked by other color
-                    moves.push_back(to_string(r) + to_string(f) + to_string(tr) + to_string(tf));
+                    moves.push_back(encodeMove(r, f, tr, tf));
                 }
                 break;
             }
@@ -210,8 +260,9 @@ vector<string> enumerateBishopMoves(int r, int f, char piece) { // list all poss
     return moves;
 }
 
-vector<string> enumerateRookMoves(int r, int f, char piece) { // list all possible rook moves for a given rook
-    vector<string> moves;
+vector<int> enumerateRookMoves(int r, int f, char piece) { // list all possible rook moves for a given rook
+    vector<int> moves;
+    moves.reserve(14);
     int rookDirections[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}; // rook move directions
     for (int i = 0; i < 4; i++) {
         int dr = rookDirections[i][0];
@@ -220,10 +271,10 @@ vector<string> enumerateRookMoves(int r, int f, char piece) { // list all possib
         int tf = f + df;
         while (inBounds(tr, tf)) { // keep moving in each direction until edge of board or blocked
             if (board[tr][tf] == '.') {
-                moves.push_back(to_string(r) + to_string(f) + to_string(tr) + to_string(tf));
+                moves.push_back(encodeMove(r, f, tr, tf));
             } else {
                 if (islower(board[tr][tf]) != islower(piece)) { // capture if blocked by other color
-                    moves.push_back(to_string(r) + to_string(f) + to_string(tr) + to_string(tf));
+                    moves.push_back(encodeMove(r, f, tr, tf));
                 }
                 break;
             }
@@ -234,8 +285,9 @@ vector<string> enumerateRookMoves(int r, int f, char piece) { // list all possib
     return moves;
 }
 
-vector<string> enumerateQueenMoves(int r, int f, char piece) { // list all possible queen moves for a given queen
-    vector<string> moves;
+vector<int> enumerateQueenMoves(int r, int f, char piece) { // list all possible queen moves for a given queen
+    vector<int> moves;
+    moves.reserve(27);
     int queenDirections[8][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}}; // queen move directions
     for (int i = 0; i < 8; i++) {
         int dr = queenDirections[i][0];
@@ -244,10 +296,10 @@ vector<string> enumerateQueenMoves(int r, int f, char piece) { // list all possi
         int tf = f + df;
         while (inBounds(tr, tf)) { // keep moving in each direction until edge of board or blocked
             if (board[tr][tf] == '.') {
-                moves.push_back(to_string(r) + to_string(f) + to_string(tr) + to_string(tf));
+                moves.push_back(encodeMove(r, f, tr, tf));
             } else {
                 if (islower(board[tr][tf]) != islower(piece)) { // capture if blocked by other color
-                    moves.push_back(to_string(r) + to_string(f) + to_string(tr) + to_string(tf));
+                    moves.push_back(encodeMove(r, f, tr, tf));
                 }
                 break;
             }
@@ -258,39 +310,40 @@ vector<string> enumerateQueenMoves(int r, int f, char piece) { // list all possi
     return moves;
 }
 
-vector<string> enumerateKingMoves(int r, int f, char piece) { // list all possible king moves for a given king
-    vector<string> moves;
+vector<int> enumerateKingMoves(int r, int f, char piece) { // list all possible king moves for a given king
+    vector<int> moves;
+    moves.reserve(10);
     int kingDirections[8][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}}; // king move directions
     for (int i = 0; i < 8; i++) {
         int tr = r + kingDirections[i][0];
         int tf = f + kingDirections[i][1];
         if (inBounds(tr, tf)) {
             if (board[tr][tf] == '.' || islower(board[tr][tf]) != islower(piece)) {
-                moves.push_back(to_string(r) + to_string(f) + to_string(tr) + to_string(tf));
+                moves.push_back(encodeMove(r, f, tr, tf));
             }
         }
     }
   if (piece == 'K' && !whiteKingMoved) { // white castling
         if (!whiteLeftRookMoved && board[7][1] == '.' && board[7][2] == '.' && board[7][3] == '.') {
-            moves.push_back("7472Q"); // queenside
+            moves.push_back(encodeMove(7, 4, 7, 2, 2)); // queenside, flag=2
         }
         if (!whiteRightRookMoved && board[7][5] == '.' && board[7][6] == '.') {
-            moves.push_back("7476K"); // kingside
+            moves.push_back(encodeMove(7, 4, 7, 6, 1)); // kingside, flag=1
         }
     }
     if (piece == 'k' && !blackKingMoved) { // black castling
         if (!blackLeftRookMoved && board[0][1] == '.' && board[0][2] == '.' && board[0][3] == '.') {
-            moves.push_back("0402Q"); // queenside
+            moves.push_back(encodeMove(0, 4, 0, 2, 2)); // queenside, flag=2
         }
         if (!blackRightRookMoved && board[0][5] == '.' && board[0][6] == '.') {
-            moves.push_back("0406K"); // kingside
+            moves.push_back(encodeMove(0, 4, 0, 6, 1)); // kingside, flag=1
         }
     }
     return moves;
 }
 
-vector<string> enumeratePieceMoves(int r, int f) {
-    vector<string> moves;
+vector<int> enumeratePieceMoves(int r, int f) {
+    vector<int> moves;
     char piece = board[r][f];
     if (piece == '.') return moves; // no piece
 
@@ -305,12 +358,13 @@ vector<string> enumeratePieceMoves(int r, int f) {
     return moves; // return list of moves
 }
 
-vector<string> enumerateAllMoves(bool whiteToMove) {
-    vector<string> moves;
+vector<int> enumerateAllMoves(bool whiteToMove) {
+    vector<int> moves;
+    moves.reserve(50); // typical position has 30-40 legal moves
     for (int r = 0; r < 8; r++) { // make every move for every piece of color
         for (int f = 0; f < 8; f++) {
             if (board[r][f] != '.' && (isupper(board[r][f]) == whiteToMove)) {
-                vector<string> pieceMoves = enumeratePieceMoves(r, f);
+                vector<int> pieceMoves = enumeratePieceMoves(r, f);
                 moves.insert(moves.end(), pieceMoves.begin(), pieceMoves.end());
             }
         }
@@ -318,13 +372,13 @@ vector<string> enumerateAllMoves(bool whiteToMove) {
     return moves;
 }
 
-int getMoveScore(string move) {
+int getMoveScore(int move) {
     // Rank moves for better alpha-beta pruning
     int score = 0;
-    int r = move[0] - '0';
-    int f = move[1] - '0';
-    int tr = move[2] - '0';
-    int tf = move[3] - '0';
+    int r = getFromRank(move);
+    int f = getFromFile(move);
+    int tr = getToRank(move);
+    int tf = getToFile(move);
     char piece = board[r][f];
     char captured = board[tr][tf];
 
@@ -356,33 +410,48 @@ int getMoveScore(string move) {
     return score;
 }
 
-vector<string> orderMoves(vector<string> moves) {
-    // Sort moves by score descending
-    sort(moves.begin(), moves.end(), [](const string& a, const string& b) {
+void orderMoves(vector<int>& moves) {
+    // Sort moves by score descending (in-place, no copy)
+    sort(moves.begin(), moves.end(), [](int a, int b) {
         return getMoveScore(a) > getMoveScore(b);
     });
-    return moves;
 }
 
 int enumerateMoveTree(int depth, bool whiteToMove, int currentEval, int alpha = -10000000, int beta = 10000000) { // recursive evaluation with alpha-beta pruning
     if (depth == 0) return immediateEvaluation(); // base case
 
-    vector<string> moves = enumerateAllMoves(whiteToMove); // get moves
-    moves = orderMoves(moves); // order moves for better time
+    vector<int> moves = enumerateAllMoves(whiteToMove); // get moves
+    orderMoves(moves); // order moves for better time (in-place)
     
     if (whiteToMove) { // for white (maximizing player)
         int te = -10000000; // initial value
-        for (string move : moves) {
-            int r = move[0] - '0'; // make move
-            int f = move[1] - '0';
-            int tr = move[2] - '0';
-            int tf = move[3] - '0';
+        for (int move : moves) {
+            int r = getFromRank(move);
+            int f = getFromFile(move);
+            int tr = getToRank(move);
+            int tf = getToFile(move);
+            int flag = getMoveFlag(move);
+            char movingPiece = board[r][f];
             char captured = board[tr][tf];
-            board[tr][tf] = board[r][f];
+            board[tr][tf] = movingPiece;
             board[r][f] = '.';
+            if (flag == 1) { // kingside castle
+                board[7][5] = 'R';
+                board[7][7] = '.';
+            } else if (flag == 2) { // queenside castle
+                board[7][3] = 'R';
+                board[7][0] = '.';
+            }
             int evaluation = enumerateMoveTree(depth - 1, false, currentEval, alpha, beta);
-            board[r][f] = board[tr][tf]; // undo move
+            board[r][f] = movingPiece; // undo move
             board[tr][tf] = captured;
+            if (flag == 1) {
+                board[7][7] = 'R';
+                board[7][5] = '.';
+            } else if (flag == 2) {
+                board[7][0] = 'R';
+                board[7][3] = '.';
+            }
             te = max(te, evaluation);
             alpha = max(alpha, te); // update alpha
             if (beta <= alpha) break; // prune remaining branches
@@ -390,36 +459,32 @@ int enumerateMoveTree(int depth, bool whiteToMove, int currentEval, int alpha = 
         return te; // return evaluation
     } else { // for black (minimizing player)
         int te = 10000000; 
-        for (string move : moves) {
-            int r = move[0] - '0';
-            int f = move[1] - '0';
-            int tr = move[2] - '0';
-            int tf = move[3] - '0';
+        for (int move : moves) {
+            int r = getFromRank(move);
+            int f = getFromFile(move);
+            int tr = getToRank(move);
+            int tf = getToFile(move);
+            int flag = getMoveFlag(move);
+            char movingPiece = board[r][f];
             char captured = board[tr][tf];
-            board[tr][tf] = board[r][f];
+            board[tr][tf] = movingPiece;
             board[r][f] = '.';
-            if (move.length() == 5) { //castling if K or Q is appended to move tag
-                if (move[4] == 'K') {
-                    board[0][5] = 'r';
-                    board[0][7] = '.';
-                }
-                if (move[4] == 'Q') {
-                    board[0][3] = 'r';
-                    board[0][0] = '.';
-                }
+            if (flag == 1) { // kingside castle
+                board[0][5] = 'r';
+                board[0][7] = '.';
+            } else if (flag == 2) { // queenside castle
+                board[0][3] = 'r';
+                board[0][0] = '.';
             }
             int evaluation = enumerateMoveTree(depth - 1, true, currentEval, alpha, beta);
-            board[r][f] = board[tr][tf];
+            board[r][f] = movingPiece;
             board[tr][tf] = captured;
-            if (move.length() == 5) { // undo castling move
-                if (move[4] == 'K') {
-                    board[0][7] = 'r';
-                    board[0][5] = '.';
-                }
-                if (move[4] == 'Q') {
-                    board[0][0] = 'r';
-                    board[0][3] = '.';
-                }
+            if (flag == 1) { // undo castling move
+                board[0][7] = 'r';
+                board[0][5] = '.';
+            } else if (flag == 2) {
+                board[0][0] = 'r';
+                board[0][3] = '.';
             }
             te = min(te, evaluation);
             beta = min(beta, te); // update beta
@@ -429,50 +494,46 @@ int enumerateMoveTree(int depth, bool whiteToMove, int currentEval, int alpha = 
     }
 }
 
-string selector(int depth, int currentEval) { // select best move for black
-    vector<string> moves = enumerateAllMoves(false); // black to move
-    moves = orderMoves(moves); // order moves for better time
+int selector(int depth, int currentEval) { // select best move for black
+    vector<int> moves = enumerateAllMoves(false); // black to move
+    orderMoves(moves); // order moves for better time (in-place)
 
-    string bestMove;
+    int bestMove = 0;
     int te = 10000000;
     
     for (int i = 0; i < moves.size(); i++) {
-        int r = moves[i][0] - '0';
-        int f = moves[i][1] - '0';
-        int tr = moves[i][2] - '0';
-        int tf = moves[i][3] - '0';
+        int r = getFromRank(moves[i]);
+        int f = getFromFile(moves[i]);
+        int tr = getToRank(moves[i]);
+        int tf = getToFile(moves[i]);
+        int flag = getMoveFlag(moves[i]);
         
+        char movingPiece = board[r][f];
         char captured = board[tr][tf];
-        board[tr][tf] = board[r][f];
+        board[tr][tf] = movingPiece;
         board[r][f] = '.';
         
         // Handle castling
-        if (moves[i].length() == 5) {
-            if (moves[i][4] == 'K') {
-                board[0][5] = 'r';
-                board[0][7] = '.';
-            }
-            if (moves[i][4] == 'Q') {
-                board[0][3] = 'r';
-                board[0][0] = '.';
-            }
+        if (flag == 1) { // kingside castle
+            board[0][5] = 'r';
+            board[0][7] = '.';
+        } else if (flag == 2) { // queenside castle
+            board[0][3] = 'r';
+            board[0][0] = '.';
         }
         
         int evaluation = enumerateMoveTree(depth - 1, true, currentEval);
         
         // Undo the move immediately
-        board[r][f] = board[tr][tf];
+        board[r][f] = movingPiece;
         board[tr][tf] = captured;
         
-        if (moves[i].length() == 5) {
-            if (moves[i][4] == 'K') {
-                board[0][7] = 'r';
-                board[0][5] = '.';
-            }
-            if (moves[i][4] == 'Q') {
-                board[0][0] = 'r';
-                board[0][3] = '.';
-            }
+        if (flag == 1) {
+            board[0][7] = 'r';
+            board[0][5] = '.';
+        } else if (flag == 2) {
+            board[0][0] = 'r';
+            board[0][3] = '.';
         }
         
         if (evaluation < te) {
@@ -531,7 +592,7 @@ int main(int argc, char* argv[]) {
     bool moveValid;
     Timer timer;
 
-    cout << "Welcome to \033[1mPrism Engine V0.6\033[0m\n";
+    cout << "Welcome to \033[1mPRISM Engine V0.7\033[0m\n";
     cout << "(C) 2025 Tommy Ciccone All Rights Reserved.\n";
 
     initializeBoard();
@@ -550,12 +611,14 @@ int main(int argc, char* argv[]) {
         int tr = coordinates[2] - '0';
         int tf = coordinates[3] - '0';
 
-        vector<string> legalMoves = enumerateAllMoves(true);
-        for (string lm : legalMoves) {
-            // Check for exact match or match without castling flag
-            if (lm == coordinates || lm.substr(0, 4) == coordinates) {
+        vector<int> legalMoves = enumerateAllMoves(true);
+        int matchedMove = 0;
+        for (int lm : legalMoves) {
+            // Check for match (ignore flag for user input)
+            if (getFromRank(lm) == r && getFromFile(lm) == f && 
+                getToRank(lm) == tr && getToFile(lm) == tf) {
                 moveValid = true;
-                coordinates = lm; // Use the full move string with flag if present
+                matchedMove = lm; // Use the full move with flag if present
                 break;
             }
         }
@@ -575,58 +638,77 @@ int main(int argc, char* argv[]) {
         board[tr][tf] = board[r][f];
         board[r][f] = '.';
 
-        if (coordinates.length() == 5) {
-            if (coordinates[4] == 'K') {
-                board[7][5] = 'R';
-                board[7][7] = '.';
-            }
-            if (coordinates[4] == 'Q') {
-                board[7][3] = 'R';
-                board[7][0] = '.';
-            }
+        int flag = getMoveFlag(matchedMove);
+        if (flag == 1) { // kingside castle
+            board[7][5] = 'R';
+            board[7][7] = '.';
+        } else if (flag == 2) { // queenside castle
+            board[7][3] = 'R';
+            board[7][0] = '.';
         }
 
         printBoard();
-        cout << "Evaluation: " << immediateEvaluation() << "\n\n";
+        int eval = immediateEvaluation();
+        cout << "Evaluation: " << eval << "\n\n";
+        
+        if (eval > 50000) {
+            cout << "Checkmate. White wins.\n";
+            return 1;
+        } else if (eval < -50000) {
+            cout << "Checkmate. Black wins.\n";
+            return -1;
+        }
 
         cout << "Black is thinking...\n\n";
         positionsEvaluated = 0;
         
         timer.start();
-        response = selector(engineDepth, immediateEvaluation());
+        int responseMove = selector(engineDepth, immediateEvaluation());
         timer.stop();
-        if (response.size() < 4) {
+        if (responseMove == 0) {
             cout << "Black has no legal moves. Game over.\n";
             break;
         }
         
-        cout << "Black plays: " << convertToAlgebraic(response) << "\n";
+        int br = getFromRank(responseMove);
+        int bf = getFromFile(responseMove);
+        int btr = getToRank(responseMove);
+        int btf = getToFile(responseMove);
+        
+        string files = "abcdefgh";
+        string ranks = "87654321";
+        string responseAlgebraic = string(1, files[bf]) + string(1, ranks[br]) + string(1, files[btf]) + string(1, ranks[btr]);
+        
+        cout << "Black plays: " << responseAlgebraic << "\n";
         cout << "Evaluated " << positionsEvaluated << " positions in " << timer.getTime() << " seconds.\n";
-
-        int br = response[0] - '0';
-        int bf = response[1] - '0';
-        int btr = response[2] - '0';
-        int btf = response[3] - '0';
 
         blackCastleCheck(br, bf);
 
         board[btr][btf] = board[br][bf];
         board[br][bf] = '.';
 
-        if (response.length() == 5) {
-            if (response[4] == 'K') {
-                board[0][5] = 'r';
-                board[0][7] = '.';
-            }
-            if (response[4] == 'Q') {
-                board[0][3] = 'r';
-                board[0][0] = '.';
-            }
+        int responseFlag = getMoveFlag(responseMove);
+        if (responseFlag == 1) { // kingside castle
+            board[0][5] = 'r';
+            board[0][7] = '.';
+            castled = true;
+        } else if (responseFlag == 2) { // queenside castle
+            board[0][3] = 'r';
+            board[0][0] = '.';
             castled = true;
         }
 
         printBoard();
-        cout << "Evaluation: " << immediateEvaluation() << "\n\n";
+        eval = immediateEvaluation();
+        cout << "Evaluation: " << eval << "\n\n";
+        
+        if (eval > 50000) {
+            cout << "Checkmate. White wins.\n";
+            return 1;
+        } else if (eval < -50000) {
+            cout << "Checkmate. Black wins.\n";
+            return -1;
+        }
     }
     return 0;
 }
