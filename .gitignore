@@ -2,3 +2,6 @@
 .vscode/*
 .DS_Store
 .DS_Store/*
+
+/bots
+/match_temp
